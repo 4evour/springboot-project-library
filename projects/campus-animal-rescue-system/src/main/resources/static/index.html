@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>校园流浪动物救助管理系统</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app" v-cloak>
+    <header class="topbar">
+        <div>
+            <h1>校园流浪动物救助管理系统</h1>
+            <p>流浪动物救助、领养申请与信息管理</p>
+        </div>
+        <nav v-if="currentUser">
+            <span>
+                {{ currentUser.realName }}
+                <template v-if="currentUser.realName !== (currentUser.role === 'ADMIN' ? '管理员' : '用户')">
+                    （{{ currentUser.role === 'ADMIN' ? '管理员' : '用户' }}）
+                </template>
+            </span>
+            <button @click="logout">退出</button>
+        </nav>
+    </header>
+
+    <main v-if="!currentUser" class="auth-panel">
+        <section class="auth-card">
+            <h2>{{ authMode === 'login' ? '账号登录' : '用户注册' }}</h2>
+            <input v-model="authForm.username" placeholder="用户名">
+            <input v-model="authForm.password" type="password" placeholder="密码">
+            <input v-if="authMode === 'register'" v-model="authForm.realName" placeholder="姓名">
+            <input v-if="authMode === 'register'" v-model="authForm.phone" placeholder="手机号">
+            <button class="primary" @click="submitAuth">{{ authMode === 'login' ? '登录' : '注册' }}</button>
+            <button class="ghost" @click="authMode = authMode === 'login' ? 'register' : 'login'">
+                {{ authMode === 'login' ? '没有账号？去注册' : '已有账号？去登录' }}
+            </button>
+            <p class="hint">默认管理员：admin / 123456，普通用户：user / 123456</p>
+        </section>
+    </main>
+
+    <main v-else class="layout">
+        <aside class="sidebar">
+            <button :class="{active: view === 'animals'}" @click="view='animals'; loadAnimals()">动物浏览</button>
+            <button :class="{active: view === 'rescues'}" @click="view='rescues'; loadAnimals(); loadMyRescues()">我的救助</button>
+            <button :class="{active: view === 'adoptions'}" @click="view='adoptions'; loadAnimals(); loadMyAdoptions()">我的领养</button>
+            <button :class="{active: view === 'feedback'}" @click="view='feedback'; loadMyFeedback()">我的反馈</button>
+            <button :class="{active: view === 'notices'}" @click="view='notices'; loadNotices()">公告</button>
+            <template v-if="isAdmin">
+                <button :class="{active: view === 'adminAnimals'}" @click="view='adminAnimals'; loadAnimals()">动物管理</button>
+                <button :class="{active: view === 'adminRescues'}" @click="view='adminRescues'; loadAdminRescues()">救助管理</button>
+                <button :class="{active: view === 'adminAdoptions'}" @click="view='adminAdoptions'; loadAdminAdoptions()">领养管理</button>
+                <button :class="{active: view === 'adminFeedback'}" @click="view='adminFeedback'; loadAdminFeedback()">反馈管理</button>
+                <button :class="{active: view === 'adminUsers'}" @click="view='adminUsers'; loadUsers()">用户管理</button>
+                <button :class="{active: view === 'adminNotices'}" @click="view='adminNotices'; loadNotices()">公告管理</button>
+            </template>
+        </aside>
+
+        <section class="content">
+            <p v-if="message" class="message">{{ message }}</p>
+
+            <section v-if="view === 'animals' || view === 'adminAnimals'">
+                <h2>{{ view === 'animals' ? '动物浏览' : '动物管理' }}</h2>
+                <div class="grid">
+                    <article class="card" v-for="a in animals" :key="a.id">
+                        <img :src="a.imageUrl || '/placeholder.svg'" :alt="a.name">
+                        <div>
+                            <h3>{{ a.name }}</h3>
+                            <p>{{ a.species }} · {{ a.gender }} · {{ a.age }}</p>
+                            <p>{{ a.location }}</p>
+                            <p>{{ a.healthStatus }}</p>
+                            <p>{{ animalStatusText(a.status) }}</p>
+                            <p class="desc">{{ a.description }}</p>
+                            <button v-if="view === 'animals'" @click="fillAdoption(a)">申请领养</button>
+                            <button v-if="view === 'adminAnimals'" @click="editAnimal(a)">编辑</button>
+                            <button v-if="view === 'adminAnimals'" @click="deleteAnimal(a.id)">删除</button>
+                        </div>
+                    </article>
+                </div>
+                <div v-if="view === 'adminAnimals'" class="panel">
+                    <h3>动物表单</h3>
+                    <div class="form-grid">
+                        <input v-model="animalForm.name" placeholder="名称">
+                        <input v-model="animalForm.species" placeholder="种类">
+                        <input v-model="animalForm.gender" placeholder="性别">
+                        <input v-model="animalForm.age" placeholder="年龄">
+                        <input v-model="animalForm.location" placeholder="地点">
+                        <input v-model="animalForm.healthStatus" placeholder="健康状态">
+                        <input v-model="animalForm.imageUrl" placeholder="图片 URL">
+                        <select v-model="animalForm.status">
+                            <option value="WAITING">待领养</option>
+                            <option value="RESCUING">救助中</option>
+                            <option value="ADOPTED">已领养</option>
+                        </select>
+                        <input v-model="animalForm.description" placeholder="描述">
+                        <button class="primary" @click="saveAnimal">保存</button>
+                    </div>
+                </div>
+            </section>
+
+            <section v-if="view === 'rescues' || view === 'adminRescues'">
+                <h2>{{ view === 'rescues' ? '我的救助' : '救助管理' }}</h2>
+                <div v-if="view === 'rescues'" class="panel">
+                    <div class="form-grid">
+                        <select v-model="rescueForm.animalId">
+                            <option value="">关联动物可选</option>
+                            <option v-for="a in animals" :value="a.id">{{ a.name }}</option>
+                        </select>
+                        <input v-model="rescueForm.title" placeholder="标题">
+                        <input v-model="rescueForm.location" placeholder="地点">
+                        <input v-model="rescueForm.description" placeholder="描述">
+                        <button class="primary" @click="submitRescue">提交救助</button>
+                    </div>
+                </div>
+                <article class="card" v-for="r in rescues" :key="r.id">
+                    <div class="split">
+                        <strong>{{ r.title }}</strong>
+                        <span>{{ rescueStatusText(r.status) }}</span>
+                    </div>
+                    <p>{{ r.location }}</p>
+                    <p>{{ r.description }}</p>
+                    <select v-if="view === 'adminRescues'" v-model="r.status" @change="updateRescue(r)">
+                        <option value="SUBMITTED">已提交</option><option value="PROCESSING">处理中</option><option value="DONE">已完成</option>
+                    </select>
+                </article>
+            </section>
+
+            <section v-if="view === 'adoptions' || view === 'adminAdoptions'">
+                <h2>{{ view === 'adoptions' ? '我的领养' : '领养管理' }}</h2>
+                <div v-if="view === 'adoptions'" class="panel">
+                    <div class="form-grid">
+                        <select v-model="adoptionForm.animalId">
+                            <option value="">选择动物</option>
+                            <option v-for="a in animals" :value="a.id">{{ a.name }}</option>
+                        </select>
+                        <input v-model="adoptionForm.reason" placeholder="领养原因">
+                        <button class="primary" @click="submitAdoption">提交领养申请</button>
+                    </div>
+                </div>
+                <article class="card" v-for="a in adoptions" :key="a.id">
+                    <div class="split">
+                        <strong>{{ a.animalName }}</strong>
+                        <span>{{ adoptionStatusText(a.status) }}</span>
+                    </div>
+                    <p>{{ a.reason }}</p>
+                    <select v-if="view === 'adminAdoptions'" v-model="a.status" @change="updateAdoption(a)">
+                        <option value="PENDING">待审核</option><option value="APPROVED">已通过</option><option value="REJECTED">已拒绝</option>
+                    </select>
+                </article>
+            </section>
+
+            <section v-if="view === 'feedback' || view === 'adminFeedback'">
+                <h2>{{ view === 'feedback' ? '我的反馈' : '反馈管理' }}</h2>
+                <div v-if="view === 'feedback'" class="panel">
+                    <div class="form-row">
+                        <input v-model="feedbackForm.content" placeholder="反馈内容">
+                        <button class="primary" @click="submitFeedback">提交反馈</button>
+                    </div>
+                </div>
+                <article class="card" v-for="f in feedback" :key="f.id">
+                    <div class="split">
+                        <strong>{{ f.username || currentUser.username }}</strong>
+                        <span>反馈 #{{ f.id }}</span>
+                    </div>
+                    <p>{{ f.content }}</p>
+                    <p v-if="f.reply">回复：{{ f.reply }}</p>
+                    <div v-if="view === 'adminFeedback'" class="form-row">
+                        <input v-model="f.reply" placeholder="回复内容">
+                        <button @click="replyFeedback(f)">回复</button>
+                    </div>
+                </article>
+            </section>
+
+            <section v-if="view === 'adminUsers'">
+                <h2>用户管理</h2>
+                <table>
+                    <tr><th>用户名</th><th>姓名</th><th>角色</th><th>状态</th><th>操作</th></tr>
+                    <tr v-for="u in users" :key="u.id">
+                        <td>{{ u.username }}</td>
+                        <td>{{ u.realName }}</td>
+                        <td>{{ roleText(u.role) }}</td>
+                        <td>{{ userStatusText(u.status) }}</td>
+                        <td><button @click="toggleUser(u)">{{ u.status === 'ACTIVE' ? '禁用' : '启用' }}</button></td>
+                    </tr>
+                </table>
+            </section>
+
+            <section v-if="view === 'notices' || view === 'adminNotices'">
+                <h2>{{ view === 'notices' ? '公告' : '公告管理' }}</h2>
+                <div v-if="view === 'adminNotices'" class="panel">
+                    <div class="form-row">
+                        <input v-model="noticeForm.title" placeholder="标题">
+                        <input v-model="noticeForm.content" placeholder="内容">
+                        <button class="primary" @click="saveNotice">保存公告</button>
+                    </div>
+                </div>
+                <article class="card" v-for="n in notices" :key="n.id">
+                    <div class="split">
+                        <strong>{{ n.title }}</strong>
+                        <button v-if="view === 'adminNotices'" @click="editNotice(n)">编辑</button>
+                    </div>
+                    <p>{{ n.content }}</p>
+                </article>
+            </section>
+        </section>
+    </main>
+</div>
+<script src="/vendor/vue.global.prod.js"></script>
+<script src="/vendor/axios.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

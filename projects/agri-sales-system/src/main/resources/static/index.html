@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智慧农产品销售系统</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app" v-cloak>
+    <header class="topbar">
+        <div>
+            <h1>智慧农产品销售系统</h1>
+            <p>校园合作基地农产品选购与订单管理</p>
+        </div>
+        <nav v-if="currentUser">
+            <span>
+                {{ currentUser.realName }}
+                <template v-if="currentUser.realName !== (currentUser.role === 'ADMIN' ? '管理员' : '用户')">
+                    （{{ currentUser.role === 'ADMIN' ? '管理员' : '用户' }}）
+                </template>
+            </span>
+            <button @click="logout">退出</button>
+        </nav>
+    </header>
+
+    <main v-if="!currentUser" class="auth-panel">
+        <section class="auth-card">
+            <h2>{{ authMode === 'login' ? '账号登录' : '用户注册' }}</h2>
+            <input v-model="authForm.username" placeholder="用户名">
+            <input v-model="authForm.password" type="password" placeholder="密码">
+            <input v-if="authMode === 'register'" v-model="authForm.realName" placeholder="姓名">
+            <input v-if="authMode === 'register'" v-model="authForm.phone" placeholder="手机号">
+            <button class="primary" @click="submitAuth">{{ authMode === 'login' ? '登录' : '注册' }}</button>
+            <button class="ghost" @click="authMode = authMode === 'login' ? 'register' : 'login'">
+                {{ authMode === 'login' ? '没有账号？去注册' : '已有账号？去登录' }}
+            </button>
+            <p class="hint">默认管理员：admin / 123456，普通用户：user / 123456</p>
+        </section>
+    </main>
+
+    <main v-else class="layout">
+        <aside class="sidebar">
+            <button :class="{active: view === 'shop'}" @click="view='shop'">商品选购</button>
+            <button :class="{active: view === 'cart'}" @click="view='cart'; loadCart()">购物车</button>
+            <button :class="{active: view === 'orders'}" @click="view='orders'; loadMyOrders()">我的订单</button>
+            <button :class="{active: view === 'notices'}" @click="view='notices'; loadNotices()">公告</button>
+            <template v-if="isAdmin">
+                <button :class="{active: view === 'adminProducts'}" @click="view='adminProducts'; loadAll()">商品管理</button>
+                <button :class="{active: view === 'adminOrders'}" @click="view='adminOrders'; loadAdminOrders()">订单管理</button>
+                <button :class="{active: view === 'adminUsers'}" @click="view='adminUsers'; loadUsers()">用户管理</button>
+                <button :class="{active: view === 'adminNotices'}" @click="view='adminNotices'; loadNotices()">公告管理</button>
+            </template>
+        </aside>
+
+        <section class="content">
+            <p v-if="message" class="message">{{ message }}</p>
+
+            <section v-if="view === 'shop'">
+                <div class="toolbar">
+                    <select v-model="filters.categoryId" @change="loadProducts">
+                        <option value="">全部分类</option>
+                        <option v-for="c in categories" :value="c.id">{{ c.name }}</option>
+                    </select>
+                    <input v-model="filters.keyword" @keyup.enter="loadProducts" placeholder="搜索农产品">
+                    <button @click="loadProducts">搜索</button>
+                </div>
+                <div class="grid">
+                    <article class="product-card" v-for="p in products" :key="p.id">
+                        <img :src="p.imageUrl || '/placeholder.svg'" :alt="p.name">
+                        <div>
+                            <h3>{{ p.name }}</h3>
+                            <p>{{ p.categoryName }} · 库存 {{ p.stock }}</p>
+                            <p class="desc">{{ p.description }}</p>
+                            <strong>￥{{ p.price }}</strong>
+                            <button @click="addCart(p.id)">加入购物车</button>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+            <section v-if="view === 'cart'">
+                <h2>购物车</h2>
+                <table>
+                    <tr><th>商品</th><th>价格</th><th>数量</th><th>操作</th></tr>
+                    <tr v-for="item in cart" :key="item.id">
+                        <td>{{ item.productName }}</td>
+                        <td>￥{{ item.price }}</td>
+                        <td><input class="small" type="number" min="1" v-model.number="item.quantity" @change="updateCart(item)"></td>
+                        <td><button @click="deleteCart(item.id)">删除</button></td>
+                    </tr>
+                </table>
+                <div class="form-row">
+                    <input v-model="checkoutForm.receiverName" placeholder="收货人">
+                    <input v-model="checkoutForm.receiverPhone" placeholder="联系电话">
+                    <input v-model="checkoutForm.address" placeholder="收货地址">
+                    <button class="primary" @click="checkout">提交订单</button>
+                </div>
+            </section>
+
+            <section v-if="view === 'orders' || view === 'adminOrders'">
+                <h2>{{ view === 'orders' ? '我的订单' : '订单管理' }}</h2>
+                <article class="list-card" v-for="o in orders" :key="o.id">
+                    <div class="split">
+                        <strong>订单 #{{ o.id }} · ￥{{ o.totalAmount }}</strong>
+                        <span>{{ o.status }}</span>
+                    </div>
+                    <p>{{ o.receiverName }} {{ o.receiverPhone }} {{ o.address }}</p>
+                    <p v-for="it in o.items"> {{ it.productName }} x {{ it.quantity }} = ￥{{ it.subtotal }}</p>
+                    <select v-if="view === 'adminOrders'" v-model="o.status" @change="updateOrderStatus(o)">
+                        <option>PENDING</option><option>SHIPPED</option><option>FINISHED</option><option>CANCELLED</option>
+                    </select>
+                </article>
+            </section>
+
+            <section v-if="view === 'notices'">
+                <h2>公告</h2>
+                <article class="list-card" v-for="n in notices" :key="n.id">
+                    <h3>{{ n.title }}</h3>
+                    <p>{{ n.content }}</p>
+                </article>
+            </section>
+
+            <section v-if="view === 'adminProducts'">
+                <h2>商品管理</h2>
+                <div class="panel">
+                    <h3>分类</h3>
+                    <div class="form-row">
+                        <input v-model="categoryForm.name" placeholder="分类名称">
+                        <input v-model="categoryForm.description" placeholder="分类说明">
+                        <button @click="saveCategory">保存分类</button>
+                    </div>
+                    <button v-for="c in categories" @click="editCategory(c)">{{ c.name }}</button>
+                </div>
+                <div class="panel">
+                    <h3>商品</h3>
+                    <div class="form-grid">
+                        <select v-model="productForm.categoryId"><option v-for="c in categories" :value="c.id">{{ c.name }}</option></select>
+                        <input v-model="productForm.name" placeholder="商品名称">
+                        <input v-model="productForm.price" placeholder="价格">
+                        <input v-model="productForm.stock" placeholder="库存">
+                        <input v-model="productForm.imageUrl" placeholder="图片 URL">
+                        <input v-model="productForm.description" placeholder="说明">
+                        <select v-model="productForm.status"><option>ON_SALE</option><option>OFF_SALE</option></select>
+                        <button class="primary" @click="saveProduct">保存商品</button>
+                    </div>
+                </div>
+                <table>
+                    <tr><th>名称</th><th>分类</th><th>价格</th><th>库存</th><th>操作</th></tr>
+                    <tr v-for="p in products" :key="p.id">
+                        <td>{{ p.name }}</td><td>{{ p.categoryName }}</td><td>{{ p.price }}</td><td>{{ p.stock }}</td>
+                        <td><button @click="editProduct(p)">编辑</button><button @click="deleteProduct(p.id)">删除</button></td>
+                    </tr>
+                </table>
+            </section>
+
+            <section v-if="view === 'adminUsers'">
+                <h2>用户管理</h2>
+                <table>
+                    <tr><th>用户名</th><th>姓名</th><th>角色</th><th>状态</th><th>操作</th></tr>
+                    <tr v-for="u in users" :key="u.id">
+                        <td>{{ u.username }}</td><td>{{ u.realName }}</td><td>{{ u.role }}</td><td>{{ u.status }}</td>
+                        <td><button @click="toggleUser(u)">{{ u.status === 'ACTIVE' ? '禁用' : '启用' }}</button></td>
+                    </tr>
+                </table>
+            </section>
+
+            <section v-if="view === 'adminNotices'">
+                <h2>公告管理</h2>
+                <div class="form-row">
+                    <input v-model="noticeForm.title" placeholder="标题">
+                    <input v-model="noticeForm.content" placeholder="内容">
+                    <button @click="saveNotice">保存</button>
+                </div>
+                <article class="list-card" v-for="n in notices" :key="n.id">
+                    <div class="split"><strong>{{ n.title }}</strong><button @click="editNotice(n)">编辑</button></div>
+                    <p>{{ n.content }}</p>
+                </article>
+            </section>
+        </section>
+    </main>
+</div>
+<script src="/vendor/vue.global.prod.js"></script>
+<script src="/vendor/axios.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
